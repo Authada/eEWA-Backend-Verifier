@@ -1,0 +1,51 @@
+[versions]
+coroutines = "1.8.0"
+kotlin = "1.9.23"
+foojay = "0.8.0"
+springboot = "3.2.4"
+springDependencyManagement = "1.1.4"
+spotless = "6.25.0"
+java = "17"
+kotlinxSerialization = "1.6.3"
+oauth2OidcSdk = "11.10.1"
+presentationExchange = "0.3.0"
+ktlintVersion = "0.50.0"
+bouncyCastle = "1.78"
+arrow = "1.2.4"
+sonarqube = "5.0.0.4638"
+dependencycheck = "9.1.0"
+jacoco = "0.8.11"
+jsonpath = "2.9.0"
+eudi-lib-jvm-sdjwt-kt = "0.3.1"
+upokecenter-cbor = "4.5.2"
+waltid = "1.0.2404041616-SNAPSHOT"
+cbor = "0.9"
+coseJava = "1.1.0"
+
+[libraries]
+kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-test", version.ref = "coroutines" }
+kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+nimbusds-oauth2-oidc-sdk = { module = "com.nimbusds:oauth2-oidc-sdk", version.ref = "oauth2OidcSdk" }
+presentation-exchange = { module = "eu.europa.ec.eudi:eudi-lib-jvm-presentation-exchange-kt", version.ref = "presentationExchange" }
+bouncy-castle = { module = "org.bouncycastle:bcpkix-jdk18on", version.ref = "bouncyCastle" }
+arrow-core = { module = "io.arrow-kt:arrow-core", version.ref = "arrow" }
+arrow-fx-coroutines = { module = "io.arrow-kt:arrow-fx-coroutines", version.ref = "arrow" }
+spring-boot-devtools = { module = "org.springframework.boot:spring-boot-devtools", version.ref = "springboot" }
+jsonpath = { module = "com.jayway.jsonpath:json-path", version.ref = "jsonpath" }
+eudi-lib-jvm-sdjwt-kt = { module = "eu.europa.ec.eudi:eudi-lib-jvm-sdjwt-kt", version.ref = "eudi-lib-jvm-sdjwt-kt" }
+upokecenter-cbor = { module = "com.upokecenter:cbor", version.ref = "upokecenter-cbor" }
+waltid-mdoc-credentials = { module = "id.walt:waltid-mdoc-credentials-jvm", version.ref = "waltid" }
+cbor = { module = "co.nstant.in:cbor", version.ref = "cbor" }
+cose-java = { module = "com.augustcellars.cose:cose-java", version.ref = "coseJava" }
+
+[plugins]
+foojay-resolver-convention = { id = "org.gradle.toolchains.foojay-resolver-convention", version.ref = "foojay" }
+spring-boot = { id = "org.springframework.boot", version.ref = "springboot" }
+spring-dependency-management = { id = "io.spring.dependency-management", version.ref = "springDependencyManagement" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+kotlin-plugin-spring = { id = "org.jetbrains.kotlin.plugin.spring", version.ref = "kotlin" }
+kotlin-plugin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
+dependencycheck = { id = "org.owasp.dependencycheck", version.ref = "dependencycheck" }
+sonarqube = { id = "org.sonarqube", version.ref = "sonarqube" }
+
