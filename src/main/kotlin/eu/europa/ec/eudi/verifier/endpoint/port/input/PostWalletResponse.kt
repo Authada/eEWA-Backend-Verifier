@@ -88,7 +88,10 @@ sealed interface WalletResponseValidationError {
 }
 
 context(Raise<WalletResponseValidationError>)
-internal fun AuthorisationResponseTO.toDomain(presentation: RequestObjectRetrieved): WalletResponse {
+internal fun AuthorisationResponseTO.toDomain(
+    presentation: RequestObjectRetrieved,
+    resultDocuments: List<CredentialEntry>
+): WalletResponse {
     fun requiredIdToken(): WalletResponse.IdToken {
         ensureNotNull(idToken) { WalletResponseValidationError.MissingIdToken }
         return WalletResponse.IdToken(idToken)
@@ -97,13 +100,13 @@ internal fun AuthorisationResponseTO.toDomain(presentation: RequestObjectRetriev
     fun requiredVpToken(): WalletResponse.VpToken {
         ensureNotNull(vpToken) { WalletResponseValidationError.MissingVpTokenOrPresentationSubmission }
         ensureNotNull(presentationSubmission) { WalletResponseValidationError.MissingVpTokenOrPresentationSubmission }
-        return WalletResponse.VpToken(vpToken, presentationSubmission)
+        return WalletResponse.VpToken(resultDocuments, presentationSubmission)
     }
 
     fun requiredIdAndVpToken(): WalletResponse.IdAndVpToken {
         val a = requiredIdToken()
         val b = requiredVpToken()
-        return WalletResponse.IdAndVpToken(a.idToken, b.vpToken, b.presentationSubmission)
+        return WalletResponse.IdAndVpToken(a.idToken, resultDocuments, b.presentationSubmission)
     }
 
     val maybeError: WalletResponse.Error? = error?.let { WalletResponse.Error(it, errorDescription) }
@@ -111,13 +114,13 @@ internal fun AuthorisationResponseTO.toDomain(presentation: RequestObjectRetriev
     return maybeError ?: when (presentation.type) {
         is PresentationType.IdTokenRequest -> WalletResponse.IdToken(requiredIdToken().idToken)
         is PresentationType.VpTokenRequest -> WalletResponse.VpToken(
-            requiredVpToken().vpToken,
+            requiredVpToken().credentials,
             requiredVpToken().presentationSubmission,
         )
 
         is PresentationType.IdAndVpToken -> WalletResponse.IdAndVpToken(
             requiredIdAndVpToken().idToken,
-            requiredIdAndVpToken().vpToken,
+            requiredIdAndVpToken().credentials,
             requiredIdAndVpToken().presentationSubmission,
         )
     }
@@ -165,8 +168,8 @@ class PostWalletResponseLive(
         }
 
         val responseObject = responseObject(walletResponse, presentation)
-        verifyVpTokenAndSubmission.verify(responseObject, presentation)
-        val submitted = submit(presentation, responseObject).also { storePresentation(it) }
+        val resultDocuments = verifyVpTokenAndSubmission.verify(responseObject, presentation)
+        val submitted = submit(presentation, responseObject, resultDocuments).also { storePresentation(it) }
 
         return when (val getWalletResponseMethod = presentation.getWalletResponseMethod) {
             is GetWalletResponseMethod.Redirect ->
@@ -220,9 +223,10 @@ class PostWalletResponseLive(
     private suspend fun submit(
         presentation: RequestObjectRetrieved,
         responseObject: AuthorisationResponseTO,
+        resultDocuments: List<CredentialEntry>
     ): Presentation.Submitted {
         // add the wallet response to the presentation
-        val walletResponse = responseObject.toDomain(presentation)
+        val walletResponse = responseObject.toDomain(presentation,resultDocuments)
         val responseCode = when (presentation.getWalletResponseMethod) {
             GetWalletResponseMethod.Poll -> null
             is GetWalletResponseMethod.Redirect -> generateResponseCode()

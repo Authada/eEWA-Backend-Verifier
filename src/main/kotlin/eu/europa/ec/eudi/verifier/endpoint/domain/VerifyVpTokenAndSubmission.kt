@@ -29,10 +29,6 @@ import com.nimbusds.jose.util.Base64URL
 import com.nimbusds.jose.util.X509CertUtils
 import com.nimbusds.jwt.SignedJWT
 import com.upokecenter.cbor.CBORObject
-import eu.europa.ec.eudi.verifier.endpoint.domain.authchan.AuthenticatedChannelAlgorithmID
-import eu.europa.ec.eudi.verifier.endpoint.domain.authchan.AuthenticatedChannelAlgorithmID.`DVS-P256-SHA256-HS256`
-import eu.europa.ec.eudi.verifier.endpoint.domain.authchan.AuthenticatedChannelCOSECryptoProvider
-import eu.europa.ec.eudi.verifier.endpoint.domain.authchan.AuthenticatedChannelCOSECryptoProviderKeyInfo
 import eu.europa.ec.eudi.prex.InputDescriptor
 import eu.europa.ec.eudi.sdjwt.KeyBindingVerifier.MustBePresentAndValid
 import eu.europa.ec.eudi.sdjwt.SdJwtVerifier
@@ -42,6 +38,10 @@ import eu.europa.ec.eudi.verifier.endpoint.domain.Presentation.RequestObjectRetr
 import eu.europa.ec.eudi.verifier.endpoint.domain.PresentationType.IdAndVpToken
 import eu.europa.ec.eudi.verifier.endpoint.domain.PresentationType.IdTokenRequest
 import eu.europa.ec.eudi.verifier.endpoint.domain.PresentationType.VpTokenRequest
+import eu.europa.ec.eudi.verifier.endpoint.domain.authchan.AuthenticatedChannelAlgorithmID
+import eu.europa.ec.eudi.verifier.endpoint.domain.authchan.AuthenticatedChannelAlgorithmID.`DVS-P256-SHA256-HS256`
+import eu.europa.ec.eudi.verifier.endpoint.domain.authchan.AuthenticatedChannelCOSECryptoProvider
+import eu.europa.ec.eudi.verifier.endpoint.domain.authchan.AuthenticatedChannelCOSECryptoProviderKeyInfo
 import eu.europa.ec.eudi.verifier.endpoint.domain.authchan.AuthenticatedChannelSigner
 import eu.europa.ec.eudi.verifier.endpoint.port.input.AuthorisationResponseTO
 import eu.europa.ec.eudi.verifier.endpoint.port.input.WalletResponseValidationError
@@ -58,6 +58,7 @@ import id.walt.mdoc.dataretrieval.DeviceResponse
 import id.walt.mdoc.doc.MDoc
 import id.walt.mdoc.issuersigned.IssuerSignedItem
 import id.walt.mdoc.mdocauth.DeviceAuthentication
+import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToString
@@ -75,48 +76,66 @@ import java.security.interfaces.ECPublicKey
 private const val MSO_MDOC = "mso_mdoc"
 private const val SD_JWT = "vc+sd-jwt"
 
+@Serializable
+data class CredentialEntry(
+    val format: String,
+    val credential: String
+)
+
 class VerifyVpTokenAndSubmission(
     private val verifierConfig: VerifierConfig
 ) {
 
     context(Raise<WalletResponseValidationError>)
-    fun verify(responseObject: AuthorisationResponseTO, presentation: RequestObjectRetrieved) {
+    fun verify(
+        responseObject: AuthorisationResponseTO,
+        presentation: RequestObjectRetrieved
+    ): List<CredentialEntry> {
         logger.info("VPToken: " + responseObject.vpToken)
         logger.info("PresentationSubmission " + responseObject.presentationSubmission)
+        logger.info("APU " + responseObject.apu)
+        logger.info("APV " + responseObject.apv)
 
+        logger.info("Presentation Type " + presentation.type)
         val presentationDefinition = when (presentation.type) {
-            is IdAndVpToken -> presentation.type.presentationDefinition//
+            is IdAndVpToken -> presentation.type.presentationDefinition
             is IdTokenRequest -> {
-                return
+                return emptyList()
             }
+
             is VpTokenRequest -> presentation.type.presentationDefinition
         }
+        logger.info("PresentationDefinition " + presentationDefinition)
 
         val presentationSubmission = responseObject.presentationSubmission!!
 
-
         val jsonPathReader = JsonPath.parse(responseObject.vpToken!!)
 
-        presentationDefinition.inputDescriptors.forEach { id ->
-            val matchingDesciptor = presentationSubmission.descriptorMaps.firstOrNull {
+        return presentationDefinition.inputDescriptors.flatMap { id ->
+            val matchingDescriptors = presentationSubmission.descriptorMaps.filter {
                 id.id == it.id
-            } ?: raise(CredentialValidationFailed)
+            }
+            matchingDescriptors.mapNotNull { matchingDescriptor ->
+                val value =
+                    jsonPathReader.read<String>(JsonPath.compile(matchingDescriptor.path.value))
+                when (matchingDescriptor.format) {
+                    MSO_MDOC -> {
+                        val documentResponse =
+                            Cbor.Default.decodeFromByteArray<DeviceResponse>(Base64URL.from(value).decode())
+                        verifyMdocDocuments(
+                            documentResponse,
+                            presentation,
+                            responseObject.apu!!,
+                            responseObject.apv!!,
+                            id
+                        )
+                    }
 
-
-            when (matchingDesciptor.format) {
-                MSO_MDOC -> {
-                    val value = jsonPathReader.read<String>(JsonPath.compile(matchingDesciptor.path.value))
-                    val documentResponse =
-                        Cbor.Default.decodeFromByteArray<DeviceResponse>(Base64URL.from(value).decode())
-                    verifyMdocDocuments(documentResponse, presentation, responseObject.apu!!, responseObject.apv!!, id)
-                    //verifyMdocFields(documentResponse, id)
+                    SD_JWT -> {
+                        verifySdJwt(value, presentation, id)
+                    }
                 }
-
-                SD_JWT -> {
-                    val value =
-                        jsonPathReader.read<String>(JsonPath.compile(matchingDesciptor.path.value))
-                    verifySdJwt(value, presentation, id)
-                }
+                CredentialEntry(format = matchingDescriptor.format, credential = value)
             }
         }
     }
@@ -173,14 +192,12 @@ class VerifyVpTokenAndSubmission(
         apv: Base64URL,
         inputDescriptor: InputDescriptor
     ) {
-        //TODO verify msomdoc attributes
         ensure(mDoc.verifyValidity()) {
             raise(CredentialValidationFailed)
         }
         ensure(mDoc.verifyDocType()) {
             raise(CredentialValidationFailed)
         }
-        //mDoc.verifyIssuerSignedItems()
         mDocCheckSignature(mDoc.issuerSigned.issuerAuth!!, presentation, inputDescriptor)
         mDocDeviceCheckSignature(mDoc, presentation, apu, apv)
     }
@@ -203,7 +220,7 @@ class VerifyVpTokenAndSubmission(
             )
 
         val sessTrans = Openid4VpUtils.generateSessionTranscript(
-            verifierConfig.clientIdScheme.clientId,
+            presentation.clientIdSchemeOverride?.clientId ?: verifierConfig.clientIdScheme.clientId,
             verifierConfig.responseUriBuilder(presentation.requestId).toExternalForm(),
             apv.decodeToString(),
             apu.decodeToString(),
@@ -244,7 +261,7 @@ class VerifyVpTokenAndSubmission(
             }
         } ?: listOf(true, false)
         val result = if (isAuthenticatedChannel) {
-            if(!authChanChecks.contains(true)) {
+            if (!authChanChecks.contains(true)) {
                 logger.error("Authenticated channel is used but not allowed")
                 raise(CredentialValidationFailed)
             }
@@ -256,7 +273,7 @@ class VerifyVpTokenAndSubmission(
             logger.info("mdoc Authenticated channel valid = $result")
             result
         } else {
-            if(!authChanChecks.contains(false)) {
+            if (!authChanChecks.contains(false)) {
                 logger.error("Signature is used but not allowed")
                 raise(CredentialValidationFailed)
             }
@@ -307,10 +324,10 @@ class VerifyVpTokenAndSubmission(
                         format.jsonObject()[SD_JWT]?.jsonObject!!["sd-jwt_alg_values"]?.jsonArray?.map {
                             it.jsonPrimitive.content.startsWith("DVS-")
                         }
-                    }?: listOf(true, false)
+                    } ?: listOf(true, false)
 
                     val valid = if (isAuthenticatedChannel) {
-                        if(!authChanChecks.contains(true)) {
+                        if (!authChanChecks.contains(true)) {
                             logger.error("Authenticated channel is used but not allowed")
                             raise(CredentialValidationFailed)
                         }
@@ -324,7 +341,7 @@ class VerifyVpTokenAndSubmission(
                         logger.info("sd-jwt chain ${parsedJwt.header.x509CertChain}")
                         validHmac
                     } else {
-                        if(!authChanChecks.contains(false)) {
+                        if (!authChanChecks.contains(false)) {
                             logger.error("Signature is used but not allowed")
                             raise(CredentialValidationFailed)
                         }

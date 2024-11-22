@@ -32,6 +32,9 @@ package eu.europa.ec.eudi.verifier.endpoint.domain
 
 import eu.europa.ec.eudi.prex.PresentationDefinition
 import eu.europa.ec.eudi.prex.PresentationSubmission
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import java.time.Clock
 import java.time.Instant
 
@@ -106,22 +109,22 @@ sealed interface WalletResponse {
     }
 
     data class VpToken(
-        val vpToken: String,
+        val credentials: List<CredentialEntry>,
         val presentationSubmission: PresentationSubmission,
     ) : WalletResponse {
         init {
-            require(vpToken.isNotEmpty())
+            require(credentials.isNotEmpty())
         }
     }
 
     data class IdAndVpToken(
         val idToken: Jwt,
-        val vpToken: String,
+        val credentials: List<CredentialEntry>,
         val presentationSubmission: PresentationSubmission,
     ) : WalletResponse {
         init {
             require(idToken.isNotEmpty())
-            require(vpToken.isNotEmpty())
+            require(credentials.isNotEmpty())
         }
     }
 
@@ -162,6 +165,7 @@ sealed interface Presentation {
         val responseMode: ResponseModeOption,
         val presentationDefinitionMode: EmbedOption<RequestId>,
         val getWalletResponseMethod: GetWalletResponseMethod,
+        val clientIdSchemeOverride: ClientIdScheme? = null
     ) : Presentation
 
     /**
@@ -180,6 +184,7 @@ sealed interface Presentation {
         val ephemeralEcPrivateKey: EphemeralEncryptionKeyPairJWK?,
         val responseMode: ResponseModeOption,
         val getWalletResponseMethod: GetWalletResponseMethod,
+        val clientIdSchemeOverride: ClientIdScheme? = null
     ) : Presentation {
         init {
             require(initiatedAt.isBefore(requestObjectRetrievedAt) || initiatedAt == requestObjectRetrievedAt)
@@ -198,6 +203,7 @@ sealed interface Presentation {
                         requested.ephemeralEcPrivateKey,
                         requested.responseMode,
                         requested.getWalletResponseMethod,
+                        requested.clientIdSchemeOverride
                     )
                 }
         }

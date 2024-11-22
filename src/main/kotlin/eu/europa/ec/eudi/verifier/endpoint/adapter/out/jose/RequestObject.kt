@@ -31,7 +31,14 @@
 package eu.europa.ec.eudi.verifier.endpoint.adapter.out.jose
 
 import eu.europa.ec.eudi.prex.PresentationDefinition
-import eu.europa.ec.eudi.verifier.endpoint.domain.*
+import eu.europa.ec.eudi.verifier.endpoint.domain.ClientIdScheme
+import eu.europa.ec.eudi.verifier.endpoint.domain.EmbedOption
+import eu.europa.ec.eudi.verifier.endpoint.domain.IdTokenType
+import eu.europa.ec.eudi.verifier.endpoint.domain.Presentation
+import eu.europa.ec.eudi.verifier.endpoint.domain.PresentationType
+import eu.europa.ec.eudi.verifier.endpoint.domain.ResponseModeOption
+import eu.europa.ec.eudi.verifier.endpoint.domain.VerifierConfig
+import eu.europa.ec.eudi.verifier.endpoint.domain.presentationDefinitionOrNull
 import java.net.URL
 import java.time.Clock
 import java.time.Instant
@@ -97,7 +104,7 @@ internal fun requestObjectFromDomain(
     }
 
     return RequestObject(
-        clientIdScheme = verifierConfig.clientIdScheme,
+        clientIdScheme = presentation.clientIdSchemeOverride ?: verifierConfig.clientIdScheme,
         scope = scope,
         idTokenType = idTokenType,
         presentationDefinitionUri = presentationDefinitionUri,

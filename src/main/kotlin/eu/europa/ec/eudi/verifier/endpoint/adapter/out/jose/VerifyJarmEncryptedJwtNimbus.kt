@@ -65,6 +65,7 @@ object VerifyJarmEncryptedJwtNimbus : VerifyJarmJwtSignature {
             .process(jarmJwt, null)
             .run {
                 val header = EncryptedJWT.parse(jarmJwt).header
+                logger.info("Response header + $header")
                 mapToDomain(header.agreementPartyVInfo, header.agreementPartyUInfo)
             }
 

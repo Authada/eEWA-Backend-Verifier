@@ -35,8 +35,12 @@ import arrow.core.recover
 import arrow.core.some
 import arrow.core.toNonEmptyListOrNull
 import com.nimbusds.jose.EncryptionMethod
+import com.nimbusds.jose.JOSEObjectType
 import com.nimbusds.jose.JWEAlgorithm
 import com.nimbusds.jose.JWSAlgorithm
+import com.nimbusds.jose.JWSHeader
+import com.nimbusds.jose.crypto.ECDSASigner
+import com.nimbusds.jose.jwk.Curve
 import com.nimbusds.jose.jwk.ECKey
 import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.jwk.KeyUse
@@ -45,6 +49,8 @@ import com.nimbusds.jose.jwk.OctetSequenceKey
 import com.nimbusds.jose.jwk.RSAKey
 import com.nimbusds.jose.jwk.gen.RSAKeyGenerator
 import com.nimbusds.jose.util.Base64
+import com.nimbusds.jwt.JWTClaimsSet
+import com.nimbusds.jwt.SignedJWT
 import eu.europa.ec.eudi.verifier.endpoint.EmbedOptionEnum.ByReference
 import eu.europa.ec.eudi.verifier.endpoint.EmbedOptionEnum.ByValue
 import eu.europa.ec.eudi.verifier.endpoint.adapter.input.timer.ScheduleTimeoutPresentations
@@ -100,6 +106,16 @@ private val log = LoggerFactory.getLogger(VerifierApplication::class.java)
 
 @OptIn(ExperimentalSerializationApi::class)
 internal fun beans(clock: Clock) = beans {
+
+
+    val clientId = env.getProperty("verifier.clientId", "verifier")
+    val jarSigning = jarSigningConfig(env, clock)
+    val verifierAttestationJwt =
+        env.getProperty("verifier.attestation.jwt")
+            ?: generateAttestation(
+                jarSigning,
+                clientId
+            )
     //
     // JOSE
     //
@@ -135,6 +151,7 @@ internal fun beans(clock: Clock) = beans {
             WalletApi.requestJwtByReference(env.publicUrl()),
             WalletApi.presentationDefinitionByReference(env.publicUrl()),
             ref(),
+            verifierAttestationJwt
         )
     }
 
@@ -168,7 +185,9 @@ internal fun beans(clock: Clock) = beans {
     //
     // Config
     //
-    bean { verifierConfig(env, clock) }
+    bean {
+        verifierConfig(clientId, jarSigning, verifierAttestationJwt, env)
+    }
 
     //
     // End points
@@ -309,10 +328,246 @@ private fun jarSigningConfig(environment: Environment, clock: Clock): SigningCon
     return SigningConfig(key, algorithm)
 }
 
-private fun verifierConfig(environment: Environment, clock: Clock): VerifierConfig {
+fun generateAttestation(jarSigning: SigningConfig, issuerId: String): String {
+    log.info("Generating new attestation for $issuerId")
+    val signingKeys = jarSigning.key
+
+    val keyStoreTrustList = KeyStore.getInstance("PKCS12").apply {
+        load(VerifierApplication::class.java.classLoader.getResourceAsStream("trustlist.p12"), "password".toCharArray())
+    }
+    val verifierTrustListKeys = JWK.load(keyStoreTrustList, "verifier trustlist ca", "password".toCharArray())
+    val verifierTrustListSigner =
+        ECDSASigner(verifierTrustListKeys.toECKey().toECPrivateKey(), Curve.P_256)
+    return sign(
+        signingKeys,
+        verifierTrustListKeys.toPublicJWK(),
+        verifierTrustListSigner,
+        issuerId,
+        "verifier-attestation+jwt"
+    ) {
+        this.claim(
+            "credentials",
+            arrayOf(
+                mapOf(
+                    "meta" to mapOf(
+                        "vct_values" to arrayOf(
+                            "urn:eu.europa.ec.eudi:pid:1",
+                            "https://example.bmi.bund.de/credential/pid/1.0",
+                        )
+                    ),
+                    "format" to "vc+sd-jwt",
+                    "claims" to arrayOf(
+                        arrayOf("given_name"),
+                        arrayOf("family_name"),
+                        arrayOf("age_birth_year"),
+                        arrayOf("age_equal_or_over", "18"),
+                        arrayOf("age_in_years"),
+                        arrayOf("iat"),
+                        arrayOf("exp"),
+                        arrayOf("issuing_country"),
+                        arrayOf("issuing_authority"),
+                        arrayOf("birthdate"),
+                        arrayOf("place_of_birth", "locality"),
+                        arrayOf("place_of_birth", "region"),
+                        arrayOf("place_of_birth", "country"),
+                        arrayOf("address", "formatted"),
+                        arrayOf("address", "country"),
+                        arrayOf("address", "region"),
+                        arrayOf("address", "locality"),
+                        arrayOf("address", "postal_code"),
+                        arrayOf("address", "street_address"),
+                        arrayOf("nationalities"),
+                        arrayOf("source_document_type"),
+                        arrayOf("birth_family_name"),
+                        arrayOf("also_known_as"),
+                    ).map {
+                        mapOf("path" to it)
+                    },
+                ),
+                mapOf(
+                    "meta" to mapOf(
+                        "vct_values" to arrayOf(
+                            "urn:eu.europa.ec.eudi:msisdn:1",
+                        )
+                    ),
+                    "format" to "vc+sd-jwt",
+                    "claims" to arrayOf(
+                        arrayOf("iat"),
+                        arrayOf("exp"),
+                        arrayOf("phone_number"),
+                        arrayOf("registered_family_name"),
+                        arrayOf("contract_owner"),
+                        arrayOf("end_user"),
+                        arrayOf("mobile_operator"),
+                        arrayOf("issuing_organization"),
+                        arrayOf("verification_date"),
+                        arrayOf("verification_method_Information"),
+                    ).map {
+                        mapOf("path" to it)
+                    },
+                ),
+                mapOf(
+                    "meta" to mapOf(
+                        "vct_values" to arrayOf(
+                            "urn:eu.europa.ec.eudi:email:1",
+                        )
+                    ),
+                    "format" to "vc+sd-jwt",
+                    "claims" to arrayOf(
+                        arrayOf("iat"),
+                        arrayOf("exp"),
+                        arrayOf("email"),
+                    ).map {
+                        mapOf("path" to it)
+                    },
+                ),
+                mapOf(
+                    "format" to "mso_mdoc",
+                    "meta" to mapOf(
+                        "doctype_value" to "eu.europa.ec.eudi.email.1"
+                    ),
+                    "claims" to arrayOf(
+                        "org.iso.18013.5.1" to "issuance_date",
+                        "org.iso.18013.5.1" to "expiry_date",
+                        "org.iso.18013.5.1" to "email",
+                    ).map {
+                        mapOf(
+                            "namespace" to it.first,
+                            "claim_name" to it.second
+                        )
+                    }
+                ),
+                mapOf(
+                    "format" to "mso_mdoc",
+                    "meta" to mapOf(
+                        "doctype_value" to "org.iso.18013.5.1.mDL"
+                    ),
+                    "claims" to arrayOf(
+                        "org.iso.18013.5.1" to "family_name",
+                        "org.iso.18013.5.1" to "given_name",
+                        "org.iso.18013.5.1" to "birth_date",
+                        "org.iso.18013.5.1" to "issue_date",
+                        "org.iso.18013.5.1" to "expiry_date",
+                        "org.iso.18013.5.1" to "portrait",
+                        "org.iso.18013.5.1" to "portrait_capture_date",
+                        "org.iso.18013.5.1" to "sex",
+                        "org.iso.18013.5.1" to "height",
+                        "org.iso.18013.5.1" to "weight",
+                        "org.iso.18013.5.1" to "hair_colour",
+                        "org.iso.18013.5.1" to "birth_place",
+                        "org.iso.18013.5.1" to "resident_address",
+                        "org.iso.18013.5.1" to "eye_colour",
+                        "org.iso.18013.5.1" to "resident_city",
+                        "org.iso.18013.5.1" to "resident_state",
+                        "org.iso.18013.5.1" to "resident_postal_code",
+                        "org.iso.18013.5.1" to "resident_country",
+                        "org.iso.18013.5.1" to "age_in_years",
+                        "org.iso.18013.5.1" to "age_birth_year",
+                        "org.iso.18013.5.1" to "age_over_18",
+                        "org.iso.18013.5.1" to "age_over_21",
+                        "org.iso.18013.5.1" to "nationality",
+                        "org.iso.18013.5.1" to "family_name_national_character",
+                        "org.iso.18013.5.1" to "given_name_national_character",
+                        "org.iso.18013.5.1" to "signature_usual_mark",
+                        "org.iso.18013.5.1" to "issuing_country",
+                        "org.iso.18013.5.1" to "issuing_authority",
+                        "org.iso.18013.5.1" to "un_distinguishing_sign",
+                        "org.iso.18013.5.1" to "issuing_jurisdiction",
+                        "org.iso.18013.5.1" to "document_number",
+                        "org.iso.18013.5.1" to "administrative_number",
+                        "org.iso.18013.5.1" to "driving_privileges",
+                    ).map {
+                        mapOf(
+                            "namespace" to it.first,
+                            "claim_name" to it.second
+                        )
+                    }
+                ),
+                mapOf(
+                    "format" to "mso_mdoc",
+                    "meta" to mapOf(
+                        "doctype_value" to "eu.europa.ec.eudiw.pid.1"
+                    ),
+                    "claims" to arrayOf(
+                        "org.iso.18013.5.1" to "given_name",
+                        "org.iso.18013.5.1" to "family_name",
+                        "org.iso.18013.5.1" to "birth_date",
+                        "org.iso.18013.5.1" to "family_name_birth",
+                        "org.iso.18013.5.1" to "age_over_18",
+                        "org.iso.18013.5.1" to "age_birth_year",
+                        "org.iso.18013.5.1" to "age_in_years",
+                        "org.iso.18013.5.1" to "nationality",
+                        "org.iso.18013.5.1" to "issuance_date",
+                        "org.iso.18013.5.1" to "expiry_date",
+                        "org.iso.18013.5.1" to "issuing_authority",
+                        "org.iso.18013.5.1" to "birth_place",
+                        "org.iso.18013.5.1" to "birth_country",
+                        "org.iso.18013.5.1" to "birth_state",
+                        "org.iso.18013.5.1" to "birth_city",
+                        "org.iso.18013.5.1" to "resident_address",
+                        "org.iso.18013.5.1" to "resident_country",
+                        "org.iso.18013.5.1" to "resident_state",
+                        "org.iso.18013.5.1" to "resident_city",
+                        "org.iso.18013.5.1" to "resident_postal_code",
+                        "org.iso.18013.5.1" to "resident_street",
+                        "org.iso.18013.5.1" to "issuing_country",
+                        "org.iso.18013.5.1" to "source_document_type",
+                    ).map {
+                        mapOf(
+                            "namespace" to it.first,
+                            "claim_name" to it.second
+                        )
+                    }
+                )
+            )
+        )
+    }
+}
+
+
+private fun sign(
+    bindingKey: JWK,
+    signingKey: JWK,
+    signer: ECDSASigner,
+    id: String,
+    type: String,
+    additionalClaims: JWTClaimsSet.Builder.() -> Unit = {}
+): String {
+    val now = Clock.systemUTC().instant()
+    val jwt = SignedJWT(
+        JWSHeader.Builder(signer.supportedECDSAAlgorithm())
+            .type(JOSEObjectType(type))
+            .jwk(signingKey)
+            .build(),
+        JWTClaimsSet.Builder()
+            .issuer("AUTHADA")
+            .subject(id)
+            .issueTime(
+                Date.from(now)
+            )
+            .expirationTime(Date.from(now + Duration.ofDays(365 * 3)))
+            .claim(
+                "cnf", mapOf(
+                    "jwk" to bindingKey.toPublicJWK().toJSONObject()
+                )
+            )
+            .apply {
+                additionalClaims(this)
+            }
+            .build()
+    ).apply {
+        sign(signer)
+    }
+    return jwt.serialize()
+}
+
+private fun verifierConfig(
+    clientId: String,
+    jarSigning: SigningConfig,
+    verifierAttestationJwt: String,
+    environment: Environment
+): VerifierConfig {
     val clientIdScheme = run {
-        val clientId = environment.getProperty("verifier.clientId", "verifier")
-        val jarSigning = jarSigningConfig(environment, clock)
 
         val factory =
             when (val clientIdScheme = environment.getProperty("verifier.clientIdScheme", "pre-registered")) {
@@ -321,7 +576,7 @@ private fun verifierConfig(environment: Environment, clock: Clock): VerifierConf
                     ClientIdScheme.VerifierAttestation(
                         clientId,
                         jarSigning,
-                        environment.getRequiredProperty("verifier.verifier-attestation-jwt")
+                        verifierAttestationJwt
                     )
                 }
 

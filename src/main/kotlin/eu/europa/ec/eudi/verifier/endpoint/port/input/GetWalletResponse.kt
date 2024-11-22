@@ -44,7 +44,7 @@ import kotlinx.serialization.Serializable
 @SerialName("wallet_response")
 data class WalletResponseTO(
     @SerialName("id_token") val idToken: String? = null,
-    @SerialName("vp_token") val vpToken: String? = null,
+    @SerialName("credentials") val credentials: List<CredentialEntry>? = null,
     @SerialName("presentation_submission") val presentationSubmission: PresentationSubmission? = null,
     @SerialName("error") val error: String? = null,
     @SerialName("error_description") val errorDescription: String? = null,
@@ -54,12 +54,12 @@ private fun WalletResponse.toTO(): WalletResponseTO {
     return when (this) {
         is WalletResponse.IdToken -> WalletResponseTO(idToken = idToken)
         is WalletResponse.VpToken -> WalletResponseTO(
-            vpToken = vpToken,
+            credentials = credentials,
             presentationSubmission = presentationSubmission,
         )
         is WalletResponse.IdAndVpToken -> WalletResponseTO(
             idToken = idToken,
-            vpToken = vpToken,
+            credentials = credentials,
             presentationSubmission = presentationSubmission,
         )
         is WalletResponse.Error -> WalletResponseTO(

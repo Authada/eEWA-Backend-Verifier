@@ -149,7 +149,7 @@ sealed interface ClientIdScheme {
     }
 
     /**
-     * 'pre-registered' Client Id scheme.
+     * 'verifier_attestation' Client Id scheme.
      */
     data class VerifierAttestation(
         override val clientId: String,

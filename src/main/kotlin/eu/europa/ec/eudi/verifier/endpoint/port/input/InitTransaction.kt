@@ -36,7 +36,24 @@ import arrow.core.raise.Raise
 import arrow.core.raise.ensure
 import arrow.core.raise.ensureNotNull
 import eu.europa.ec.eudi.prex.PresentationDefinition
-import eu.europa.ec.eudi.verifier.endpoint.domain.*
+import eu.europa.ec.eudi.verifier.endpoint.domain.ClientIdScheme
+import eu.europa.ec.eudi.verifier.endpoint.domain.EmbedOption
+import eu.europa.ec.eudi.verifier.endpoint.domain.EmbedOption.ByReference
+import eu.europa.ec.eudi.verifier.endpoint.domain.EphemeralEncryptionKeyPairJWK
+import eu.europa.ec.eudi.verifier.endpoint.domain.GetWalletResponseMethod
+import eu.europa.ec.eudi.verifier.endpoint.domain.IdTokenType
+import eu.europa.ec.eudi.verifier.endpoint.domain.JarmOption
+import eu.europa.ec.eudi.verifier.endpoint.domain.Nonce
+import eu.europa.ec.eudi.verifier.endpoint.domain.Presentation
+import eu.europa.ec.eudi.verifier.endpoint.domain.PresentationType
+import eu.europa.ec.eudi.verifier.endpoint.domain.RequestId
+import eu.europa.ec.eudi.verifier.endpoint.domain.ResponseModeOption
+import eu.europa.ec.eudi.verifier.endpoint.domain.VerifierConfig
+import eu.europa.ec.eudi.verifier.endpoint.domain.retrieveRequestObject
+import eu.europa.ec.eudi.verifier.endpoint.generateAttestation
+import eu.europa.ec.eudi.verifier.endpoint.port.input.ClientIdSchemeOverrideTO.PreRegistered
+import eu.europa.ec.eudi.verifier.endpoint.port.input.ClientIdSchemeOverrideTO.VerifierAttestation
+import eu.europa.ec.eudi.verifier.endpoint.port.input.ClientIdSchemeOverrideTO.X509SansDns
 import eu.europa.ec.eudi.verifier.endpoint.port.out.cfg.CreateQueryWalletResponseRedirectUri
 import eu.europa.ec.eudi.verifier.endpoint.port.out.cfg.GenerateRequestId
 import eu.europa.ec.eudi.verifier.endpoint.port.out.cfg.GenerateTransactionId
@@ -104,6 +121,18 @@ enum class EmbedModeTO {
 }
 
 @Serializable
+enum class ClientIdSchemeOverrideTO {
+    @SerialName("pre-registered")
+    PreRegistered,
+
+    @SerialName("x509_san_dns")
+    X509SansDns,
+
+    @SerialName("verifier_attestation")
+    VerifierAttestation,
+}
+
+@Serializable
 data class InitTransactionTO(
     @SerialName("type") val type: PresentationTypeTO = PresentationTypeTO.IdAndVpTokenRequest,
     @SerialName("id_token_type") val idTokenType: IdTokenTypeTO? = null,
@@ -113,6 +142,8 @@ data class InitTransactionTO(
     @SerialName("jar_mode") val jarMode: EmbedModeTO? = null,
     @SerialName("presentation_definition_mode") val presentationDefinitionMode: EmbedModeTO? = null,
     @SerialName("wallet_response_redirect_uri_template") val redirectUriTemplate: String? = null,
+    @SerialName("clientid_scheme_override") val clientIdSchemeOverride: ClientIdSchemeOverrideTO? = X509SansDns,
+    @SerialName("clientid_override") val clientIdOverride: String? = null,
 )
 
 /**
@@ -161,11 +192,12 @@ class InitTransactionLive(
     private val verifierConfig: VerifierConfig,
     private val clock: Clock,
     private val generateEphemeralEncryptionKeyPair: GenerateEphemeralEncryptionKeyPair,
-    private val requestJarByReference: EmbedOption.ByReference<RequestId>,
-    private val presentationDefinitionByReference: EmbedOption.ByReference<RequestId>,
+    private val requestJarByReference: ByReference<RequestId>,
+    private val presentationDefinitionByReference: ByReference<RequestId>,
     private val createQueryWalletResponseRedirectUri: CreateQueryWalletResponseRedirectUri,
+    private val verifierAttestationJwt: String,
 
-) : InitTransaction {
+    ) : InitTransaction {
 
     context(Raise<ValidationError>)
     override suspend fun invoke(initTransactionTO: InitTransactionTO): JwtSecuredAuthorizationRequestTO {
@@ -188,6 +220,25 @@ class InitTransactionLive(
             responseMode = responseMode,
             presentationDefinitionMode = presentationDefinitionMode(initTransactionTO),
             getWalletResponseMethod = getWalletResponseMethod,
+            clientIdSchemeOverride = when (initTransactionTO.clientIdSchemeOverride) {
+                PreRegistered -> ClientIdScheme.PreRegistered(
+                    verifierConfig.clientIdScheme.clientId,
+                    verifierConfig.clientIdScheme.jarSigning
+                )
+
+                X509SansDns -> ClientIdScheme.X509SanDns(
+                    initTransactionTO.clientIdOverride ?: verifierConfig.clientIdScheme.clientId,
+                    verifierConfig.clientIdScheme.jarSigning
+                )
+
+                VerifierAttestation -> ClientIdScheme.VerifierAttestation(
+                    verifierConfig.clientIdScheme.clientId,
+                    verifierConfig.clientIdScheme.jarSigning,
+                    verifierAttestationJwt
+                )
+
+                else -> null
+            }
         )
         // create request, which may update presentation
         val (updatedPresentation, request) = createRequest(requestedPresentation, jarMode(initTransactionTO))
@@ -225,7 +276,7 @@ class InitTransactionLive(
                 val requestObjectRetrieved = requestedPresentation.retrieveRequestObject(clock).getOrThrow()
                 requestObjectRetrieved to JwtSecuredAuthorizationRequestTO(
                     requestedPresentation.id.value,
-                    verifierConfig.clientIdScheme.clientId,
+                    requestedPresentation.clientIdSchemeOverride?.clientId ?: verifierConfig.clientIdScheme.clientId,
                     jwt,
                     null,
                 )
@@ -235,7 +286,7 @@ class InitTransactionLive(
                 val requestUri = requestJarOption.buildUrl(requestedPresentation.requestId).toExternalForm()
                 requestedPresentation to JwtSecuredAuthorizationRequestTO(
                     requestedPresentation.id.value,
-                    verifierConfig.clientIdScheme.clientId,
+                    requestedPresentation.clientIdSchemeOverride?.clientId ?: verifierConfig.clientIdScheme.clientId,
                     null,
                     requestUri,
                 )

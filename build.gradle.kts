@@ -83,6 +83,7 @@ tasks.named<BootBuildImage>("bootBuildImage") {
         }
     }
 }
+
 fun getVersionFromCatalog(lookup: String): String {
     val versionCatalog: VersionCatalog = extensions.getByType<VersionCatalogsExtension>().named("libs")
     return versionCatalog
