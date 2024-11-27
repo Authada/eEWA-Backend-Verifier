@@ -26,6 +26,7 @@ import com.nimbusds.jose.crypto.ECDSAVerifier
 import com.nimbusds.jose.jwk.ECKey
 import com.nimbusds.jose.jwk.JWK
 import com.nimbusds.jose.util.Base64URL
+import com.nimbusds.jose.util.X509CertChainUtils
 import com.nimbusds.jose.util.X509CertUtils
 import com.nimbusds.jwt.SignedJWT
 import com.upokecenter.cbor.CBORObject
@@ -316,7 +317,12 @@ class VerifyVpTokenAndSubmission(
                 try {
                     logger.info("parsing signed jwt")
                     val parsedJwt = SignedJWT.parse(unverifiedJwt)
-                    val issuerJwk = parsedJwt.header.jwk
+                    val issuerJwk = parsedJwt.header.jwk ?: parsedJwt.header.x509CertChain?.let {
+                        if (it.isNotEmpty()) {
+                            JWK.parse(X509CertChainUtils.parse(it).first())
+                        }
+                        else null
+                    } ?: throw RuntimeException("key not found in header")
                     val isAuthenticatedChannel = (parsedJwt.header.algorithm in AuthenticatedChannelSigner.ALGORITHMS)
                     logger.info("is authenticated channel: $isAuthenticatedChannel")
 
